@@ -1,0 +1,29 @@
+./evolve.exe 40 100 0.1 1
+t_gate: 3.958000
+t_svd: 7.827000
+t_mes: 66.140000
+TOTAL TIME: 78.531000 or 82 SECONDS
+
+./evolve.exe 40 100 0.1 2
+t_gate: 6.052000
+t_svd: 13.791000
+t_mes: 54.689000
+TOTAL TIME: 75.234000 or 77 SECONDS
+
+./evolve.exe 40 100 0.1 5
+t_gate: 14.404000
+t_svd: 34.900000
+t_mes: 55.146000
+TOTAL TIME: 105.499000 or 106 SECONDS
+
+./evolve.exe 40 100 0.1 10
+t_gate: 31.198000
+t_svd: 72.168000
+t_mes: 57.526000
+TOTAL TIME: 162.327000 or 163 SECONDS
+
+./evolve.exe 40 100 0.1 20
+t_gate: 64.968000
+t_svd: 152.034000
+t_mes: 60.692000
+TOTAL TIME: 280.437000 or 284 SECONDS
