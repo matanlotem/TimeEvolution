@@ -13,12 +13,12 @@ using namespace itensor;
 
 
 
-void saveOutput(std::vector< std::vector<Real> > matrix, char *fname) {
+void saveOutput(Eigen::MatrixXd matrix, char *fname)  {
 	std::ofstream file;
 	file.open(fname);
-	for (int i=0; i< (int) matrix.size(); i++) {
-		for (int j=0; j< (int) matrix[i].size(); j++)
-			file << std::fixed << std::setprecision(15) << matrix[i][j] << "\t";
+	for (int i=0; i< (int) matrix.rows(); i++) {
+		for (int j=0; j< (int) matrix.cols(); j++)
+			file << std::fixed << std::setprecision(15) << matrix(i,j) << "\t";
 		file << "\n";
 	}
 	file.close();
@@ -118,7 +118,7 @@ void trotterAdvance(IQMPS *psi, std::vector<std::vector<IQGate> > gates, LocalMP
 	}
 }
 
-std::vector< std::vector<Real> > trotterEvolve(IQMPS psi, int totTime, Real timeRes, int stepsPerRes, std::string trotterType) {
+Eigen::MatrixXd trotterEvolve(IQMPS psi, int totTime, Real timeRes, int stepsPerRes, std::string trotterType) {
 	// profiling stuff
 	clock_t t0, t1;
 	double t_gate = 0, t_svd = 0, t_mes = 0;
@@ -155,8 +155,7 @@ std::vector< std::vector<Real> > trotterEvolve(IQMPS psi, int totTime, Real time
 		SzOp.push_back(IQMPO(ampo));
 	}
 
-	std::vector< std::vector<Real> > Sz(TSteps / stepsPerRes, std::vector<Real>(N,0));
-
+	Eigen::MatrixXd Sz(TSteps / stepsPerRes,N);
 	for (int i=0; i<TSteps; i++) {
 		if (i%(stepsPerRes*10) == 0) {
 			printfln("step %d, maxM=%d",i/stepsPerRes,maxM);
@@ -166,7 +165,7 @@ std::vector< std::vector<Real> > trotterEvolve(IQMPS psi, int totTime, Real time
 		t0 = std::clock();
 		if (i%stepsPerRes == 0)
 			for (int j=1; j<=N; j++)
-				Sz[i/stepsPerRes][j-1] = overlap(psi,SzOp[j-1],psi);
+				Sz(i/stepsPerRes,j-1) = overlap(psi,SzOp[j-1],psi);
 		t1 = std::clock();
 		t_mes += double(t1-t0);
 
@@ -204,8 +203,41 @@ void evolve2E(int N, int i1, int i2, int totTime, Real timeRes) {
 	}
 	auto psi = IQMPS(state);
 
-	for(int stepsPerRes = 1; stepsPerRes <=4; stepsPerRes *= 2)
-		trotterEvolve(psi, totTime, timeRes, stepsPerRes, "T4");
+	Eigen::Array3d stepsPerRes(1,2,4);
+	//
+	std::vector<Eigen::MatrixXd> Sz;
+	for (int i = 0; i<stepsPerRes.rows(); i++) {
+		Sz.push_back(trotterEvolve(psi, totTime, timeRes, int(stepsPerRes(i)) , "T4"));
+		Sz[Sz.size()-1] = 0.5 * Eigen::MatrixXd(int(totTime / timeRes),N).setOnes() - Sz[Sz.size()-1];
+	}
+
+	// extrapolate
+	Eigen::Array3d x = pow(timeRes / stepsPerRes,4);
+	std::vector<double> X(5);
+	for(int i=0; i<=4; i++)
+		X[i] = pow(x,i).sum();
+	double den = 2*X[1]*X[2]*X[3] - X[1]*X[1]*X[4] + X[0]*X[2]*X[4] - X[0]*X[3]*X[3] - X[2]*X[2]*X[2];
+	double X0Y = (X[2]*X[4] - X[3]*X[3]);
+	double X1Y = (X[2]*X[3] - X[1]*X[4]);
+	double X2Y = (X[1]*X[3] - X[2]*X[2]);
+
+	Sz.push_back(Eigen::MatrixXd(int(totTime / timeRes),N).setZero());
+	for (int i = 0; i<stepsPerRes.rows(); i++)
+		Sz[Sz.size()-1] += (X0Y + X1Y*x(i) + X2Y*x(i)*x(i))/den * Sz[i];
+
+	// telemetries
+	//abs((Sz[1]-Sz[0]).array())
+
+	// save
+	char tag[100];
+	sprintf(tag,"Evolve2E_T4_%d_%d_%d__%d_%g",N, i1, i2, totTime, timeRes);
+	char fname[1024];
+	for (int i = 0; i<stepsPerRes.rows(); i++) {
+		 sprintf(fname,"%s_%d.txt",tag,int(stepsPerRes(i)));
+		 saveOutput(Sz[i],fname);
+	}
+	sprintf(fname,"%s_extrap.txt",tag);
+	saveOutput(Sz[Sz.size()-1],fname);
 }
 
 void evolveT2(int N, int totTime, Real timeRes, int stepsPerRes) {
@@ -225,30 +257,45 @@ int main(int argc, char* argv[]) {
 	int N = 16;
 	int totTime = 10;
 	double timeRes = 0.1;
-	int stepsPerRes = 1;
+
 	std::string cmnd = "";
 	if (argc > 1)
 		cmnd = argv[1];
-	if (argc > 5) {
-		std::sscanf(argv[2],"%d", &N);
-		std::sscanf(argv[3],"%d", &totTime);
-		std::sscanf(argv[4],"%lf", &timeRes);
-		std::sscanf(argv[5],"%d", &stepsPerRes);
-	}
+
 	clock_t t0, t1;
 	time_t T0, T1;
 	t0 = std::clock();
 	T0 = std::time(0);
-	if (cmnd == "T2")
-		evolveT2(N, totTime, timeRes, stepsPerRes);
-	else if (cmnd == "T4")
-		evolveT4(N, totTime, timeRes, stepsPerRes);
-	else if (cmnd == "T4b")
-		evolveT4b(N, totTime, timeRes, stepsPerRes);
+	if (cmnd == "T2" || cmnd == "T4" || cmnd == "T4b") {
+		int stepsPerRes = 1;
+		if (argc > 5) {
+			std::sscanf(argv[2],"%d", &N);
+			std::sscanf(argv[3],"%d", &totTime);
+			std::sscanf(argv[4],"%lf", &timeRes);
+			std::sscanf(argv[5],"%d", &stepsPerRes);
+		}
+		if (cmnd == "T2")
+			evolveT2(N, totTime, timeRes, stepsPerRes);
+		else if (cmnd == "T4")
+			evolveT4(N, totTime, timeRes, stepsPerRes);
+		else if (cmnd == "T4b")
+			evolveT4b(N, totTime, timeRes, stepsPerRes);
+	}
+	else if (cmnd == "2E") {
+		int i1=0, i2=0;
+		if (argc > 6) {
+			std::sscanf(argv[2],"%d", &N);
+			std::sscanf(argv[3],"%d", &i1);
+			std::sscanf(argv[4],"%d", &i2);
+			std::sscanf(argv[5],"%d", &totTime);
+			std::sscanf(argv[6],"%lf", &timeRes);
+		}
+		evolve2E(N, i1, i2, totTime, timeRes);
+	}
+
 	t1 = std::clock();
 	T1 = std::time(0);
 	printfln("TOTAL TIME: %f or %f SECONDS",double(t1-t0)/CLOCKS_PER_SEC, T1-T0);
-	printfln("%s\t%d\t%f\t%f\t%f\t%f",cmnd, N, totTime, timeRes, stepsPerRes);
 	printfln("%f\t%f",double(t1-t0)/CLOCKS_PER_SEC, T1-T0);
 	return 0;
 }
