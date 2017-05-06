@@ -8,12 +8,13 @@
 #include <iomanip>
 
 #include <vector>
+#include "TnConfig.h"
 using namespace itensor;
 
 
 
 
-void saveOutput(Eigen::MatrixXd matrix, char *fname)  {
+void saveOutput(Eigen::MatrixXd matrix, const char *fname)  {
 	std::ofstream file;
 	file.open(fname);
 	for (int i=0; i< (int) matrix.rows(); i++) {
@@ -31,6 +32,7 @@ void saveOutput(Eigen::MatrixXd matrix, char *fname)  {
  * 	T4 - 4th order trotter expansion
  */
 std::vector<std::vector<IQGate> > trotterGates(SiteSet sites, double trotterStep, std::string trotterType) {
+	double Jxy = 1, Jz = 0;
 	auto gates = std::vector<std::vector<IQGate> >();
 	std::vector<double> tau;
 
@@ -64,9 +66,9 @@ std::vector<std::vector<IQGate> > trotterGates(SiteSet sites, double trotterStep
 		gates.push_back(std::vector<IQGate>());
 
 	for(int b = 1; b < sites.N(); b++) {
-		IQTensor hh = sites.op("Sz",b)*sites.op("Sz",b+1);
-		hh += 0.5*sites.op("Sp",b)*sites.op("Sm",b+1);
-		hh += 0.5*sites.op("Sm",b)*sites.op("Sp",b+1);
+		IQTensor hh = 0.5*Jxy*sites.op("Sp",b)*sites.op("Sm",b+1)
+				    + 0.5*Jxy*sites.op("Sm",b)*sites.op("Sp",b+1)
+					+ Jz*sites.op("Sz",b)*sites.op("Sz",b+1);
 		for (int t=0; t < (int) tau.size(); t++)
 			gates[t].push_back(IQGate(sites,b,b+1,IQGate::tReal,tau[t],hh));
 	}
@@ -125,7 +127,7 @@ Eigen::MatrixXd trotterEvolve(IQMPS psi, int totTime, Real timeRes, int stepsPer
 	int maxM = 0;
 
 	// setup
-	auto args = Args("Cutoff",1e-15	,"Maxm",64, "Minm",32);
+	auto args = Args("Cutoff",1e-20,"Maxm",64, "Minm",2);
 	int TSteps = int(totTime / timeRes * stepsPerRes);
 	auto sites = psi.sites();
 	int N = sites.N();
@@ -179,6 +181,21 @@ Eigen::MatrixXd trotterEvolve(IQMPS psi, int totTime, Real timeRes, int stepsPer
 	printfln("%f\t%f\t%f",t_gate/CLOCKS_PER_SEC,t_svd/CLOCKS_PER_SEC,t_mes/CLOCKS_PER_SEC);
 
 	return Sz;
+}
+
+void initFromConfig(TnConfig config) {
+	int N = config.getN();
+
+	// create initial state
+	auto sites = SpinHalf(N);
+	auto state = InitState(sites);
+	for (int i = 1; i <= N; ++i) {
+		if (config.isUp(i))
+			state.set(i,"Dn");
+		else
+			state.set(i,"Up");
+	}
+	auto psi = IQMPS(state);
 }
 
 void evolve1E(int N, int totTime, Real timeRes, int stepsPerRes, std::string trotterType) {
@@ -257,6 +274,9 @@ int main(int argc, char* argv[]) {
 	int N = 16;
 	int totTime = 10;
 	double timeRes = 0.1;
+
+	TnConfig config("./test.config");
+	config.print();
 
 	std::string cmnd = "";
 	if (argc > 1)
